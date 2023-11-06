@@ -1,0 +1,167 @@
+#===============================================================================
+# Name   : Dr. Anom Yudistira
+# Author : Dr. Anom Yudistira
+# Date   : 21-April-2023 09:30:00
+# Version: v0.0.1
+# Aim    : Discrete Event Cirkular System Simulation
+# URL    : https://bahasa-r.blogspot.co.id/
+#          https://www.r-bloggers.com/lang/indonesian/50/. 
+#===============================================================================
+
+library(simmer)
+library(simmer.bricks)
+library(tidyverse)
+library(simmer.plot)
+library(parallel)
+library(magrittr)
+library(Hmisc)
+library(GGally)
+
+# rm(list=ls())
+
+# Circular Simulation (Circular)
+#
+# A company sends goods from the factory to the warehouse. The company uses two identical trucks (TrukA and TruckB) to carry out this activity. The truck 
+# carries out the loading process at the factory, which takes 1 hour, then leaves for the warehouse with a travel time of 1.5 hours. Arriving at the
+# warehouse, the unloading process is carried out, which takes 0.5 hours. After the unloading process is completed at the warehouse, the truck returns to 
+# the factory with a travel time of 1 hour. The simulation is run for 24 hours.
+#
+# MUAT is a function that provides a value for the length of the LOAD activity in the factory
+# BONGKAR is a function that provides a value for the duration of UNLOADING activity in the warehouse
+# TravelMB is a function that provides a value for the length of travel time from the factory (LOADING) to the warehouse (UNLOADING)
+# TravelBM is a function that provides a value for the length of travel time from the warehouse (UNLOADING) to the factory (LOADING)
+# rsc is a numerical vector that gives the capacity of the LOADING place in the factory and the UNLOADING place in the warehouse
+# rn is a numeric value that gives the simulation time range, the installed value is 24 hours
+# wkA is a function that gives the arrival time of TruckA, the installed value is at(0)
+# wkB is a function that gives the arrival time of TruckB, the installed value is at(0)
+# ongoing is a logical value, where the TRUE value means recording the arrival of entities that are still being processed in the system. This is
+# demonstrated by the finished column value FALSE
+#
+# n_trukA is the number of type A trucks available (default value = 1)
+# n_trukB is the number of type B trucks available (default value = 1)
+# skedul is to show the availability of available BONGKAR (UNLOADING) operator capacity
+# from 0:00 - 07:00 BONGKAR (UNLOADING) operator breaks, 07:00-12:00 BONGKAR (UNLOADING) operator available (deafult value 1)
+# from 12:00 - 13:00 the BONGKAR (UNLOADING) operator takes a break again, 13:00 - 24:00 the BONGKAR (UNLOADING) operator is active again.
+# sim_sirkular(MUAT = function() 1, BONGKAR = function() 0.5, TravelMB = function() 1.5,
+#                            TravelBM = function() 1, rn=24, n_trukA = 1, n_trukB = 1, days = 1, per_resource = FALSE,
+#                            ongoing=FALSE, skedul = list(c(0, 7, 12, 13), c(0, 1, 0, 1),24)), , capA = function() 1 + rnorm(1,0, 0.01),
+#                            capB = function() 3 + rnorm(1,0, 0.02))
+#
+# sim_sirkular function ==========================================
+sim_sirkular <- function(MUAT, BONGKAR, TravelMB, TravelBM, rn=24, n_trukA = 1, n_trukB = 1,
+                         days = 1, per_resource = FALSE, ongoing=FALSE, 
+                         skedul = list(c(0, 7, 12, 13), c(0, 1, 0, 1),24), capA = function() 1 + rnorm(1,0, 0.01),
+                         capB = function() 3 + rnorm(1,0, 0.02))
+{
+  if (!is.function(MUAT) || !is.function(BONGKAR) || !is.function(TravelMB)|| !is.function(TravelBM))
+  {
+    stop("MUAT, BONGKAR, TravelMB, dan TravelBM harus berupa fungsi numeric")
+  }
+  
+  sirk <- simmer("sirkular")
+  
+  capacity_schedule <- schedule(skedul[[1]], skedul[[2]], skedul[[3]])
+  
+  awal <- trajectory() %>%
+    set_global("total", 0)
+  
+  pabrik <- trajectory() %>%
+    # log_("arrived at the factory (pabrik) ..") %>%
+    seize("pabrik") %>%
+    timeout(MUAT) %>%
+    release("pabrik") %>%
+    set_attribute("volume_muat", function() get_attribute(sirk, "cap")) %>%
+    # log_("out of the factory (pabrik) ..") %>%
+    # log_("journey to the warehouse ..") %>%
+    timeout(TravelMB)
+  
+  gudang <- trajectory() %>%
+    # log_("arrived at the warehouse ..") %>%
+    seize("gudang") %>%
+    timeout(BONGKAR) %>%
+    release("gudang") %>%
+    set_global("total", function() {get_global(sirk, "total") + get_attribute(sirk, "volume_muat")}) %>%
+    # log_("out of the warehouse ..") %>%
+    # log_("journey to the factory (pabrik) ..") %>%
+    timeout(TravelBM)
+  
+  # ==============================================================
+  # preparing total of j units of truck type A (TrukA)
+  ba <- (n_trukA - 1)/2
+  waktuA <- seq(0, ba, by = 0.5) + 7 # the first time TrukA arrived at the factory
+  trukA <- x1 <- NULL
+  for (j in 1:n_trukA){
+    trukA <- c(trukA, paste("TrukA", j, "_", sep=""))
+    if (j < 10){
+      k <- paste(0, j, sep="")
+    } else {
+      k <- j
+    }
+    
+    tra <- trajectory() %>%
+      set_attribute("nomor_trukA", j) %>% # prepare a trajectory for i units of truck type A (TrukA)
+      set_attribute("cap", capA) %>%
+      join(pabrik, gudang) %>%
+      activate(function() paste("TrukA", get_attribute(sirk, "nomor_trukA"), 
+                                "_", sep = "")) # reactivate TrukA(i)_
+    
+    trjA <- paste("trajA", k, sep="")  
+    x1 <- c(x1, assign(trjA, tra))
+    add_generator(sirk, trukA[j], x1[[j]], at(waktuA[j]), mon = 2) # generate entity "trukA[j]"
+  }
+  # ================================================================
+  # preparing total of i units of truck type B (TrukB)
+  bb <- (n_trukB - 1)/2
+  waktuB <- seq(0, bb, by = 0.5) + 7  # the first time TrukB arrived at the factory
+  trukB <- x2 <- NULL
+  for (i in 1:n_trukB){
+    trukB <- c(trukB, paste("TrukB", i, "_", sep=""))
+    if (i < 10){
+      k <- paste(0, i, sep="")
+    } else {
+      k <- i
+    }
+    
+    trb <- trajectory() %>%  # prepare a trajectory for i units of truck type B (TrukB)
+      set_attribute("nomor_trukB", i) %>%
+      set_attribute("cap", capB) %>%
+      join(pabrik, gudang) %>%
+      activate(function() paste("TrukB", get_attribute(sirk, "nomor_trukB"), 
+                                "_", sep = "")) # reactivate TrukB(i)_
+    
+    trjB <- paste("trajB", k, sep="")
+    x2 <- c(x2, assign(trjB, trb))
+    add_generator(sirk, trukB[i], x2[[i]], at(waktuB[i]), mon = 2) # generate entity "trukB[i]"
+  }
+  # ================================================================
+  
+  sirk %>%
+    add_resource("pabrik", capacity_schedule) %>%
+    add_resource("gudang", capacity_schedule) %>%
+    add_generator("total_awal", awal, at(0), mon=2) %>%
+    run(rn * days) %>% invisible()
+  
+  out1 <- as_tibble(get_mon_arrivals(sirk, per_resource, ongoing))
+  out2 <- as_tibble(get_mon_resources(sirk))
+  out3 <- as_tibble(get_mon_attributes(sirk))
+  out <- list(Arrivals = out1, Resources = out2, Attributes = out3)
+  return(out)
+}
+
+# function ============================================================================================
+
+dt_out <- sim_sirkular(MUAT = function() runif(1, 0.5, 1.5), 
+                       BONGKAR = function() runif(1, 0.75, 2),
+                       TravelMB = function() runif(1, 0.5, 0.75), 
+                       TravelBM = function() runif(1, 0.25, 0.65), 
+                       rn = 24, 
+                       n_trukA = 2, 
+                       n_trukB = 3, 
+                       days = 7, 
+                       per_resource = TRUE, 
+                       ongoing = FALSE,
+                       skedul = list(c(0, 7, 12, 13), c(0, 1, 0, 1),24), 
+                       capA = function() 1 + rnorm(1,0, 0.01),
+                       capB = function() 3 + rnorm(1,0, 0.02))
+
+dt_out

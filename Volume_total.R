@@ -1,0 +1,56 @@
+#===============================================================================
+# Name   : Dr. Anom Yudistira
+# Author : Dr. Anom Yudistira
+# Date   : 21-April-2023 09:30:00
+# Version: v0.0.1
+# Aim    : Ouput analysis of Volume in Discrete Event Cirkular System Simulation
+# URL    : https://bahasa-r.blogspot.co.id/
+#          https://www.r-bloggers.com/lang/indonesian/50/. 
+#===============================================================================
+library(simmer)
+library(simmer.bricks)
+library(tidyverse)
+library(simmer.plot)
+library(parallel)
+library(magrittr)
+library(Hmisc)
+library(GGally)
+
+# start fungsi volume total ======================================================
+# function to calculate the volume of material transported from the factory to the warehouse ====
+Volume_total <- function(n = 50, n_trukA = 2, n_trukB = 3, days = 25, alpha = 0.05) {
+  dt <- replicate(n, expr=sim_sirkular(MUAT = function() runif(1, 0.5, 1.5), 
+                                       BONGKAR = function() runif(1, 0.75, 2),
+                                       TravelMB = function() runif(1, 0.5, 0.75), 
+                                       TravelBM = function() runif(1, 0.25, 0.65),
+                                       rn=24, 
+                                       n_trukA = n_trukA, 
+                                       n_trukB = n_trukB,
+                                       days = days, 
+                                       per_resource = TRUE, 
+                                       ongoing=FALSE, 
+                                       skedul = list(c(0, 7, 12, 13), c(0, 1, 0, 1),24), 
+                                       capA = function() 1 + rnorm(1,0, 0.01),
+                                       capB = function() 3 + rnorm(1,0, 0.02))$Attributes,
+                  simplify = FALSE)
+  
+  vol <- NULL
+  for (k in 1:50) {
+    # calculate the volume of material successfully transported per replication
+    vol <- c(vol, dt[[k]] %>% filter(key == "total") %>% slice_tail(n=1) %$% value)
+  }
+  
+  return(list(Volume_Total = has_tot <- tibble(Total = vol, Replication = 1:n),
+              Ringkasan = summary(has_tot$Total),
+              Statistik_Mean_SD = Hmisc::smean.sd(has_tot$Total),
+              CI_normal = Hmisc::smean.cl.normal(has_tot$Total, conf.int = 1-alpha),
+              CI_boot = Hmisc::smean.cl.boot(has_tot$Total, conf.int = 1-alpha))
+  )
+  
+}
+# end function =============================================
+
+vol <- Volume_total()
+vol
+
+
